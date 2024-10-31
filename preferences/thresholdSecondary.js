@@ -56,9 +56,12 @@ export const ThresholdSecondary = GObject.registerClass({
             this._currentDevice.endMaxLifeSpanRangeMin, this._currentDevice.endMaxLifeSpanRangeMax);
 
         if (this._currentDevice.deviceHaveStartThreshold) { // if StartThresholdSupported
-            this._full_capacity_start_threshold_2.set_range(this._currentDevice.startFullCapacityRangeMin, this._currentDevice.startFullCapacityRangeMax);
-            this._balanced_start_threshold_2.set_range(this._currentDevice.startBalancedRangeMin, this._currentDevice.startBalancedRangeMax);
-            this._maxlife_start_threshold_2.set_range(this._currentDevice.startMaxLifeSpanRangeMin, this._currentDevice.startMaxLifeSpanRangeMax);
+            this._full_capacity_start_threshold_2.set_range(this._currentDevice.startFullCapacityRangeMin,
+                this._settings.get_int('ful-end-threshold2') - this._currentDevice.minDiffLimit);
+            this._balanced_start_threshold_2.set_range(this._currentDevice.startBalancedRangeMin,
+                this._settings.get_int('bal-end-threshold2') - this._currentDevice.minDiffLimit);
+            this._maxlife_start_threshold_2.set_range(this._currentDevice.startMaxLifeSpanRangeMin,
+                this._settings.get_int('max-end-threshold2') - this._currentDevice.minDiffLimit);
 
             this._updateRangeSubtitle(this._full_capacity_start_threshold_row_2, this._currentDevice.startFullCapacityRangeMin,
                 this._settings.get_int('ful-end-threshold2') - this._currentDevice.minDiffLimit);
