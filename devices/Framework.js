@@ -7,6 +7,7 @@ import * as Helper from '../lib/helper.js';
 const {dmiVendor, exitCode, fileExists, findValidProgramInPath, readFileInt, runCommandCtl} = Helper;
 
 const BAT1_END_PATH = '/sys/class/power_supply/BAT1/charge_control_end_threshold';
+const BAT1_START_PATH = '/sys/class/power_supply/BAT1/charge_control_start_threshold';
 const FRAMEWORK_TOOL_PATH = '/usr/bin/framework_tool';
 const CROS_EC_PATH = '/dev/cros_ec';
 
@@ -44,6 +45,9 @@ export const FrameworkSingleBatteryBAT1 = GObject.registerClass({
 
     isAvailable() {
         if (!dmiVendor()?.includes('Framework'))
+            return false;
+
+        if (fileExists(BAT1_START_PATH)) // Prefer FrameworkSingleBatteryEndStartBAT1
             return false;
 
         this._supportedConfiguration = [];
@@ -185,4 +189,108 @@ export const FrameworkSingleBatteryBAT1 = GObject.registerClass({
     }
 });
 
+export const FrameworkSingleBatteryEndStartBAT1 = GObject.registerClass({
+    Signals: {'threshold-applied': {param_types: [GObject.TYPE_STRING]}},
+}, class FrameworkSingleBatteryEndStartBAT1 extends GObject.Object {
+    constructor(settings) {
+        super();
+        this.name = 'FrameworkEndStartLimit';
+        this.type = 36;
+        this.deviceNeedRootPermission = true;
+        this.deviceHaveDualBattery = false;
+        this.deviceHaveStartThreshold = true;
+        this.deviceHaveVariableThreshold = true;
+        this.deviceHaveBalancedMode = true;
+        this.deviceHaveAdaptiveMode = false;
+        this.deviceHaveExpressMode = false;
+        this.deviceUsesModeNotValue = false;
+        this.iconForFullCapMode = '100';
+        this.iconForBalanceMode = '080';
+        this.iconForMaxLifeMode = '060';
+        this.endFullCapacityRangeMax = 100;
+        this.endFullCapacityRangeMin = 80;
+        this.endBalancedRangeMax = 85;
+        this.endBalancedRangeMin = 65;
+        this.endMaxLifeSpanRangeMax = 85;
+        this.endMaxLifeSpanRangeMin = 55;
+        this.startFullCapacityRangeMax = 99;
+        this.startFullCapacityRangeMin = 75;
+        this.startBalancedRangeMax = 84;
+        this.startBalancedRangeMin = 60;
+        this.startMaxLifeSpanRangeMax = 84;
+        this.startMaxLifeSpanRangeMin = 50;
+        this.minDiffLimit = 1;
+        this.incrementsStep = 1;
+        this.incrementsPage = 5;
+
+        this._settings = settings;
+        this.ctlPath = null;
+    }
+
+    isAvailable() {
+        if (!dmiVendor()?.includes('Framework'))
+            return false;
+        if (!fileExists(BAT1_START_PATH))
+            return false;
+        if (!fileExists(BAT1_END_PATH))
+            return false;
+        return true;
+    }
+
+    async setThresholdLimit(chargingMode) {
+        this._endValue = this._settings.get_int(`current-${chargingMode}-end-threshold`);
+        this._startValue = this._settings.get_int(`current-${chargingMode}-start-threshold`);
+
+        if (this._verifyThreshold())
+            return exitCode.SUCCESS;
+
+        // Some device wont update end threshold if start threshold > end threshold
+        const cmd = this._startValue >= this.endLimitValue ? 'BAT1_END_START' : 'BAT1_START_END';
+        const [status] = await runCommandCtl(this.ctlPath, cmd, `${this._endValue}`, `${this._startValue}`);
+        if (status === exitCode.ERROR) {
+            this.emit('threshold-applied', 'error');
+            return exitCode.ERROR;
+        } else if (status === exitCode.TIMEOUT) {
+            this.emit('threshold-applied', 'timeout');
+            return exitCode.ERROR;
+        }
+
+        if (this._verifyThreshold())
+            return exitCode.SUCCESS;
+
+        if (this._delayReadTimeoutId)
+            GLib.source_remove(this._delayReadTimeoutId);
+        this._delayReadTimeoutId = null;
+
+        await new Promise(resolve => {
+            this._delayReadTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
+                resolve();
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+        this._delayReadTimeoutId = null;
+
+        if (this._verifyThreshold())
+            return exitCode.SUCCESS;
+
+        this.emit('threshold-applied', 'not-updated');
+        return exitCode.ERROR;
+    }
+
+    _verifyThreshold() {
+        this.endLimitValue = readFileInt(BAT1_END_PATH);
+        this.startLimitValue = readFileInt(BAT1_START_PATH);
+        if (this.endLimitValue === this._endValue && this.startLimitValue === this._startValue) {
+            this.emit('threshold-applied', 'success');
+            return true;
+        }
+        return false;
+    }
+
+    destroy() {
+        if (this._delayReadTimeoutId)
+            GLib.source_remove(this._delayReadTimeoutId);
+        this._delayReadTimeoutId = null;
+    }
+});
 
